@@ -58,10 +58,10 @@ export namespace Device {
               width: { min: 1080, ideal: 1080, max: 1080 },
               height: { min: 1080, ideal: 1080, max: 1080 },
             },
-            {
-              width: { min: 640, ideal: 1080, max: 1920 },
-              height: { min: 640, ideal: 1080, max: 1920 },
-            },
+            // {
+            //   width: { min: 640, ideal: 1080, max: 1920 },
+            //   height: { min: 640, ideal: 1080, max: 1920 },
+            // },
           ],
         },
       });
@@ -102,5 +102,27 @@ export namespace Device {
       console.error('StopStream', e);
     }
     return null;
+  };
+
+  /**
+   * ストリームを開始したビデオのサイズを取得する
+   */
+  export const GetVideoSize = (videoElement: HTMLVideoElement) => {
+    return new Promise<{ w: number; h: number } | null>((resolve) => {
+      // console.log('IncDevice.GetVideoSize');
+      const ret = { w: 0, h: 0 };
+      const intervalId = setInterval(() => {
+        if (!(videoElement.readyState >= HTMLMediaElement.HAVE_METADATA)) return;
+        ret.h = videoElement.videoHeight;
+        ret.w = videoElement.videoWidth;
+        clearInterval(intervalId);
+        resolve(ret);
+        return;
+      }, 200);
+      setTimeout(() => {
+        clearInterval(intervalId);
+        resolve(null);
+      }, 2000);
+    });
   };
 }
