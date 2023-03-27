@@ -88,6 +88,7 @@ export namespace Device {
       return { stream: null, message: String(error) };
     }
   };
+
   /**
    * カメラの停止
    */

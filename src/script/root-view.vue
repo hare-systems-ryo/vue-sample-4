@@ -1,19 +1,16 @@
 <script setup lang="ts">
 import { onMounted, ref, watch, reactive, computed } from 'vue';
-
+import { BrowserQRCodeReader } from '@zxing/browser';
 import { useElementSize } from '@vueuse/core';
 import { Device } from './device';
-const elmTop = ref<HTMLElement | null>(null);
-const elmBottom = ref<HTMLElement | null>(null);
+
 interface State {
   video: {
-    // selectedDeviceId: null | string;
     stream: MediaStream | null;
     size: {
       h: number;
       w: number;
     };
-    zoom: number;
   };
   device: {
     id: null | string;
@@ -36,13 +33,11 @@ interface State {
 
 const state = reactive<State>({
   video: {
-    // selectedDeviceId: null,
     stream: null,
     size: {
       h: 0,
       w: 0,
     },
-    zoom: 1,
   },
   device: {
     id: null,
@@ -52,7 +47,7 @@ const state = reactive<State>({
     intervalId: null,
     isDecoding: false,
     data: null,
-    fps: 10,
+    fps: 1,
     adjuster: 1,
     rect: {
       x: 0,
@@ -62,11 +57,11 @@ const state = reactive<State>({
     },
   },
 });
+
 const elmVideo = ref<HTMLVideoElement | null>(null);
 const elmCanvas = ref<HTMLCanvasElement | null>(null);
 const elmViewContainer = ref(null);
 const elmViewContainerSize = useElementSize(elmViewContainer);
-// const stream = ref<MediaStream | null>(null);
 
 //---------------------------------------------
 /**
@@ -93,8 +88,6 @@ watch(
   }
 );
 
-//-[stream]----------------------------------------------
-
 /**
  * カメラ機能リセット
  */
@@ -103,7 +96,7 @@ const resetCamera = async () => {
     if (state.device.id === null) return;
     await startStream(state.device.id);
     drawOverlay();
-    // startQrReader();
+    startQrReader();
   } catch (error) {
     console.error('resetCamera', error);
   }
@@ -112,8 +105,11 @@ const resetCamera = async () => {
 //-[stream]----------------------------------------------
 const startStream = async (deviceId: string) => {
   try {
-    stopStream();
     if (elmVideo.value === null) throw new Error('ビデオタグがありません？');
+    //既存Streamがある場合、停止させる
+    if (state.video.stream === null) {
+      state.video.stream = Device.StopVideoStream(state.video.stream);
+    }
     const ret = await Device.GetVideoStream(deviceId);
     if (ret.stream === null) throw new Error(ret.message);
     state.video.stream = ret.stream;
@@ -128,7 +124,7 @@ const startStream = async (deviceId: string) => {
 /**
  * ビデオの解像度から親要素に収まる拡大率を計算する
  */
-const zoomRate = computed(() => {
+const scale = computed(() => {
   const width = elmViewContainerSize.width.value;
   const rateX = width / state.video.size.w;
   const rateY = width / state.video.size.h;
@@ -139,29 +135,20 @@ const zoomRate = computed(() => {
   }
 });
 
-/**
- * カメラ Stream停止
- */
-const stopStream = () => {
-  if (state.video.stream === null) {
-    state.video.stream = Device.StopVideoStream(state.video.stream);
-  }
-};
-
 // [ キャンバス描画 ] -------------------------------------------------------------
 
 /**
  * ガイド線の描画
  */
 const drawOverlay = () => {
-  console.log('drawOverlay');
+  // console.log('drawOverlay');
   let ctx: CanvasRenderingContext2D | null = null;
   try {
     if (!elmCanvas.value) return;
     ctx = elmCanvas.value.getContext('2d');
     if (!ctx) throw new Error(`state.element.canvasOverlay.getContext('2d') Error`);
     ctx.clearRect(0, 0, state.video.size.w, state.video.size.h);
-    const color = state.scan.data !== null ? 'rgb(255,120,0)' : 'rgb(0,140,0)';
+    const color = state.scan.data === null ? 'rgb(255,120,0)' : 'rgb(0,140,0)';
     ctx.strokeStyle = color;
     ctx.lineWidth = 3;
     const w = Math.min(state.video.size.w, state.video.size.h);
@@ -178,10 +165,12 @@ const drawOverlay = () => {
   }
 };
 
+/**
+ * ガイド線の描画タイミング
+ */
 watch(
   () => [state.scan.adjuster, state.scan.data],
   () => {
-    // console.log('watch', ' [state.read.adjuster, state.read.scanData.succsess]', before, after);
     drawOverlay();
   }
 );
@@ -194,8 +183,6 @@ watch(
 const startQrReader = () => {
   stopQrReader();
   //console.log('startQrReader');
-  const fps = 5;
-  const stayTime = 3;
   state.scan.intervalId = (setInterval as any)(async () => {
     try {
       if (state.scan.data !== null) return;
@@ -217,28 +204,27 @@ const startQrReader = () => {
  * QRコードを解析します。
  */
 const qrRead = async () => {
-  //  console.log('read', rect);
+  console.log('qrRead');
   if (!elmVideo.value) return;
   let canv: HTMLCanvasElement | null = null;
   let ctx: CanvasRenderingContext2D | null = null;
   try {
-    const rect = state.scan.rect;
     canv = document.createElement('canvas');
     if (!canv) return;
+    const rect = state.scan.rect;
     canv.height = rect.h;
     canv.width = rect.w;
     ctx = canv.getContext('2d');
     if (!ctx) return;
     ctx.drawImage(elmVideo.value, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.w);
     const dataUrl = canv.toDataURL('image/jpg');
-    // const ret = await IncQr.DecodeFromImageUrl(dataUrl);
-    // if (ret != null) {
-    //   state.read.scanData.succsess = true;
-    //   state.read.scanData.text = ret;
-    // } else {
-    //   state.read.scanData.succsess = false;
-    //   state.read.scanData.text = '';
-    // }
+    const ret = await decodeFromImageUrl(dataUrl);
+    console.log('decodeFromImageUrl', ret);
+    if (ret != null) {
+      state.scan.data = ret;
+    } else {
+      state.scan.data = null;
+    }
   } catch (error) {
     console.error('qrRead', error);
   } finally {
@@ -253,44 +239,69 @@ const qrRead = async () => {
 };
 
 /**
+ * DataUrlからQR画像を解析します
+ * 解析失敗の場合Nullが返却される
+ */
+const decodeFromImageUrl = async (dataUrl: string) => {
+  try {
+    const codeReader = new BrowserQRCodeReader();
+    const ret = await codeReader.decodeFromImageUrl(dataUrl);
+    return ret.getText();
+  } catch {
+    //画像にQRがセットされていない場合エラーを検知するから「これはスルーでOK」
+    return null;
+  }
+};
+
+/**
  * qr解析タスクの終了
  */
 const stopQrReader = () => {
-  // // console.log('stopQrReader');
-  // if (state.read.taskId != null) {
-  //   clearInterval(state.read.taskId);
-  //   state.read.taskisRun = false;
-  // }
+  if (state.scan.intervalId !== null) {
+    console.log('stopQrReader', state.scan.intervalId);
+    clearInterval(state.scan.intervalId);
+  }
 };
 
 //-[Style]----------------------------------------------
-const stypeViewContainer = computed(() => {
-  return {
-    height: elmViewContainerSize.width.value + 'px',
-  };
-});
 
-const stypeViewZoom = computed(() => {
+/**
+ * Video、Canvasタグ格納用の拡大縮小する要素のStyle
+ */
+const styleViewRectScale = computed(() => {
+  if (state.video.size.h === 0) {
+    return { opacity: 0 };
+  }
   return {
-    transform: `scale(${zoomRate.value})`,
+    transform: `scale(${scale.value})`,
     opacity: state.video.stream?.active === false ? '0' : '1',
   };
 });
 
-const stypeViewRect = computed(() => {
-  if (state.video.size.h === 0) {
-    return {
-      opacity: 0,
-    };
-  }
+/**
+ * スキャンしたデータを表示する要素のStyle
+ */
+const styleScanData = computed(() => {
+  const rect = state.scan.rect;
+  const scaleRate = 1 / scale.value;
   return {
-    height: state.video.size.h + 'px',
-    width: state.video.size.w + 'px',
+    transform: `scale(${scaleRate})`,
+    top: `${rect.y + rect.h}px`,
+    left: `${rect.x}px`,
+    width: `${rect.w / scaleRate}px`,
+    opacity: !state.scan.data ? '0' : '1',
   };
 });
 
-const test = () => {
-  console.log('stream', state.video.stream);
+/**
+ * QR解析を一時中止しスキャンしたデータを削除、一定時間後にQR解析再開
+ */
+const clear = () => {
+  stopQrReader();
+  state.scan.data = null;
+  setTimeout(() => {
+    startQrReader();
+  }, 1500);
 };
 
 onMounted(() => {
@@ -299,22 +310,18 @@ onMounted(() => {
 </script>
 <template>
   <div class="container-fluid">
-    <div class="card mt-2 mb-3" ref="elmTop">
+    <div class="card mt-2 mb-3">
       <div class="card-header bg-info">カメラ</div>
       <div class="card-body">
         <div class="">デバイスリスト</div>
-        <select class="form-select" aria-label="Default select example" v-model="state.device.id">
+        <select class="form-select mb-1" v-model="state.device.id">
           <template v-for="(row, index) in state.device.list" :key="index">
             <option :value="row.deviceId">{{ row.label }}</option>
           </template>
         </select>
-
-        <div class="">{{ zoomRate }}</div>
-        <div class="">{{ elmViewContainerSize }}</div>
-        <div class="">{{ state.video.size }}</div>
-        <div class="view-container" ref="elmViewContainer" :style="stypeViewContainer">
-          <div class="view-zoom" :style="stypeViewZoom">
-            <div class="view-rect" :style="stypeViewRect">
+        <div class="view">
+          <div class="view-rect" ref="elmViewContainer">
+            <div class="view-rect-scale" :style="styleViewRectScale">
               <video
                 class="video-origin"
                 ref="elmVideo"
@@ -329,14 +336,17 @@ onMounted(() => {
                 :height="state.video.size.h"
                 :width="state.video.size.w"
               ></canvas>
+              <div class="scanData" :style="styleScanData">{{ state.scan.data }}</div>
             </div>
           </div>
+          <div class="clear-btn-container" :class="{ isShow: state.scan.data !== null }">
+            <button type="button" class="btn btn-warning clearBtn" @click="clear()">クリア</button>
+          </div>
         </div>
-
-        <div class="" @click="test">test</div>
-
-        <div class="">{{ state.scan.rect }}</div>
-        <div class="">{{ state.device.list }}</div>
+      </div>
+      <div class="card-footer">
+        <label class="form-label">読み取りサイズ</label>
+        <input type="range" class="form-range" min="0.2" max="2" step="0.2" v-model="state.scan.adjuster" />
       </div>
     </div>
   </div>
@@ -349,29 +359,65 @@ onMounted(() => {
   border-color: rgb(24, 7, 112);
 }
 
-.message {
-  white-space: pre;
+.scanData {
+  position: absolute;
+  height: 2em;
+  overflow: hidden;
+  border: solid 1px gray;
+  border-radius: 10px;
+  background-color: white;
+  transform-origin: top left;
+  padding: 2px 4px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 300ms;
 }
-.d-flex {
-  justify-content: center;
-}
-.view-container {
-  width: 100%;
+
+.view {
   display: flex;
   justify-content: center;
+  align-items: center;
   overflow: hidden;
-
-  .view-zoom {
-    transform-origin: top center;
+  flex-direction: column;
+  .clear-btn-container {
+    position: absolute;
+    inset: 0 auto auto auto;
+    min-width: 300px;
+    max-width: 100%;
+    width: 60%;
+    margin-bottom: 4px;
     opacity: 0;
-    canvas,
-    video {
+    transition: opacity 300ms;
+    &.isShow {
+      opacity: 1;
+    }
+    .btn {
+      margin: 10px 10px 0 10px;
+      width: calc(100% - 20px);
+      border: solid 1px rgb(203, 88, 0);
+    }
+  }
+
+  > .view-rect {
+    min-width: 300px;
+    max-width: 100%;
+    width: 60%;
+    &::before {
+      content: '';
+      display: block;
+      padding-top: 100%;
+    }
+    > .view-rect-scale {
       position: absolute;
       inset: 0 0 0 0;
-    }
-
-    canvas {
-      // background-color: rgba(191, 46, 46, 0.241);
+      transform-origin: top left;
+      opacity: 0;
+      canvas,
+      video {
+        position: absolute;
+        inset: 0 0 0 0;
+      }
     }
   }
 }
